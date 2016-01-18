@@ -29,13 +29,16 @@ import org.openqa.grid.common.exception.GridException;
 import org.openqa.grid.internal.Registry;
 import org.openqa.grid.internal.RemoteProxy;
 import org.openqa.grid.internal.TestSlot;
+import org.openqa.selenium.remote.CapabilityType;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.logging.Logger;
 
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
@@ -44,24 +47,19 @@ import javax.servlet.http.HttpServletResponse;
 /**
  * API to query the hub config remotely.
  *
- * use the API by sending a GET to grid/api/hub/
- * with the content of the request in JSON,specifying the
- * parameters you're interesting in, for instance, to get
- * the timeout of the hub and the registered servlets :
+ * use the API by sending a GET to grid/api/hub/ with the content of the request in JSON,specifying
+ * the parameters you're interesting in, for instance, to get the timeout of the hub and the
+ * registered servlets :
  *
- * {"configuration":
- *      [
- *      "timeout",
- *      "servlets"
- *      ]
- * }
+ * {"configuration": [ "timeout", "servlets" ] }
  *
  * if no param is specified, all params known to the hub are returned.
  *
  * {"configuration": []  }
- *
  */
 public class HubStatusServlet extends RegistryBasedServlet {
+
+  private static final Logger log = Logger.getLogger(HubStatusServlet.class.getName());
 
   public HubStatusServlet() {
     super(null);
@@ -73,14 +71,13 @@ public class HubStatusServlet extends RegistryBasedServlet {
 
   @Override
   protected void doGet(HttpServletRequest request, HttpServletResponse response)
-      throws ServletException, IOException {
+    throws ServletException, IOException {
     process(request, response);
   }
 
 
-
   protected void process(HttpServletRequest request, HttpServletResponse response)
-      throws IOException {
+    throws IOException {
     response.setContentType("application/json");
     response.setCharacterEncoding("UTF-8");
     response.setStatus(200);
@@ -107,7 +104,7 @@ public class HubStatusServlet extends RegistryBasedServlet {
 
         Set<String> paramsToReturn;
         Registry registry = getRegistry();
-        Map<String,Object> allParams = registry.getConfiguration().getAllParams();
+        Map<String, Object> allParams = registry.getConfiguration().getAllParams();
 
         if (requestJSON == null || keys.size() == 0) {
           paramsToReturn = allParams.keySet();
@@ -126,6 +123,11 @@ public class HubStatusServlet extends RegistryBasedServlet {
         if (paramsToReturn.contains("slotCounts")) {
           res.add("slotCounts", getSlotCounts());
           paramsToReturn.remove("slotCounts");
+        }
+
+        if (paramsToReturn.contains("browserSlotsCount")) {
+          res.add("browserSlotsCount", getBrowserSlotsCount());
+          paramsToReturn.remove("browserSlotsCount");
         }
 
         for (String key : paramsToReturn) {
@@ -166,6 +168,53 @@ public class HubStatusServlet extends RegistryBasedServlet {
     result.addProperty("free", freeSlots);
     result.addProperty("total", totalSlots);
 
+    return result;
+  }
+
+  private JsonObject getBrowserSlotsCount() {
+    int freeSlots = 0;
+    int totalSlots = 0;
+
+    Map<String, Integer> freeBrowserSlots = new HashMap<>();
+    Map<String, Integer> totalBrowserSlots = new HashMap<>();
+
+    for (RemoteProxy proxy : getRegistry().getAllProxies()) {
+      for (TestSlot slot : proxy.getTestSlots()) {
+        String
+          slot_browser_name =
+          slot.getCapabilities().get(CapabilityType.BROWSER_NAME).toString().toUpperCase();
+        if (slot.getSession() == null) {
+          if (freeBrowserSlots.containsKey(slot_browser_name)) {
+            freeBrowserSlots.put(slot_browser_name, freeBrowserSlots.get(slot_browser_name) + 1);
+          } else {
+            freeBrowserSlots.put(slot_browser_name, 1);
+          }
+          freeSlots += 1;
+        }
+        if (totalBrowserSlots.containsKey(slot_browser_name)) {
+          totalBrowserSlots.put(slot_browser_name, totalBrowserSlots.get(slot_browser_name) + 1);
+        } else {
+          totalBrowserSlots.put(slot_browser_name, 1);
+        }
+        totalSlots += 1;
+      }
+    }
+
+    JsonObject result = new JsonObject();
+
+    for (String str : totalBrowserSlots.keySet()) {
+      JsonObject browser = new JsonObject();
+      browser.addProperty("total", totalBrowserSlots.get(str));
+      if (freeBrowserSlots.containsKey(str)) {
+        browser.addProperty("free", freeBrowserSlots.get(str));
+      } else {
+        browser.addProperty("free", 0);
+      }
+      result.add(str, browser);
+    }
+
+    result.addProperty("total", totalSlots);
+    result.addProperty("total_free", freeSlots);
     return result;
   }
 
